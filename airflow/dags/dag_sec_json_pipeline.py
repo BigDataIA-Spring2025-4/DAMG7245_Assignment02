@@ -458,7 +458,7 @@ with DAG(
         year = kwargs['dag_run'].conf.get('year')
         quarter = kwargs['dag_run'].conf.get('quarter').split('Q')[1]
         return f"""
-            CREATE OR REPLACE TABLE SEC_JSON_{year}_{quarter} (
+            CREATE OR REPLACE TABLE SEC_JSON_{year}_Q{quarter} (
             json_data VARIANT
             );
         """
@@ -478,9 +478,68 @@ with DAG(
         year = kwargs['dag_run'].conf.get('year')
         quarter = kwargs['dag_run'].conf.get('quarter').split('Q')[1]
         return f"""
-            COPY INTO SEC_JSON_{year}_{quarter}
+            COPY INTO SEC_JSON_{year}_Q{quarter}
             FROM @sec_json_stage/data/{year}/{quarter}/json/
             FILE_FORMAT = (TYPE = 'JSON');
+            CREATE OR REPLACE VIEW JSON_BS_{year}_Q{quarter} AS
+            SELECT 
+                t.json_data:year::NUMBER AS year,
+                t.json_data:quarter::STRING AS quarter,
+                t.json_data:country::STRING AS country,
+                t.json_data:city::STRING AS city,
+                t.json_data:name::STRING AS company_name,
+                t.json_data:symbol::STRING AS symbol,
+                
+                bs.value:concept::STRING AS concept,
+                bs.value:info::STRING AS info,
+                bs.value:label::STRING AS label,
+                bs.value:unit::STRING AS unit,
+                bs.value:value::NUMBER AS value
+            FROM SEC_JSON_{year}_Q{quarter} t, 
+                LATERAL FLATTEN(input => t.json_data:data.bs) bs;
+            
+            CREATE OR REPLACE VIEW JSON_CF_{year}_Q{quarter} AS
+            SELECT 
+                t.json_data:year::NUMBER AS year,
+                t.json_data:quarter::STRING AS quarter,
+                t.json_data:country::STRING AS country,
+                t.json_data:city::STRING AS city,
+                t.json_data:name::STRING AS company_name,
+                t.json_data:symbol::STRING AS symbol,
+
+                cf.value:concept::STRING AS concept,
+                cf.value:info::STRING AS info,
+                cf.value:label::STRING AS label,
+                cf.value:unit::STRING AS unit,
+                cf.value:value::NUMBER AS value
+            FROM SEC_JSON_{year}_Q{quarter} t, 
+                LATERAL FLATTEN(input => t.json_data:data.cf) cf;
+            
+            CREATE OR REPLACE VIEW JSON_IS_{year}_Q{quarter} AS
+            SELECT 
+                t.json_data:year::NUMBER AS year,
+                t.json_data:quarter::STRING AS quarter,
+                t.json_data:country::STRING AS country,
+                t.json_data:city::STRING AS city,
+                t.json_data:name::STRING AS company_name,
+                t.json_data:symbol::STRING AS symbol,
+
+                ic.value:concept::STRING AS concept,
+                ic.value:info::STRING AS info,
+                ic.value:label::STRING AS label,
+                ic.value:unit::STRING AS unit,
+                ic.value:value::NUMBER AS value
+            FROM SEC_JSON_{year}_Q{quarter} t, 
+                LATERAL FLATTEN(input => t.json_data:data.ic) ic;
+
+            CREATE OR REPLACE VIEW JSON_FV_{year}_Q{quarter} AS
+                SELECT *, 'Balance Sheet' AS section_type FROM JSON_BS_{year}_Q{quarter}
+                UNION ALL
+                SELECT *, 'Cash Flow' AS section_type FROM JSON_CF_{year}_Q{quarter}
+                UNION ALL
+                SELECT *, 'Income Statement' AS section_type FROM JSON_IS_{year}_Q{quarter};
+
+
         """
     generate_copy_sql_json = PythonOperator(
         task_id='generate_copy_sql_json',
